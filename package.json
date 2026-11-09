@@ -1,5 +1,5 @@
 {
-  "name": "revenue-split",
+  "name": "tebex-revenue-splitter",
   "version": "1.0.0",
   "description": "Local payout calculator for Tebex stores: real fees and tax, wallet settling, partner revenue splits, Discord alerts.",
   "main": "server.js",

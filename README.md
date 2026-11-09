@@ -1,4 +1,4 @@
-# Revenue Split
+# Tebex Revenue Splitter
 
 **A local payout calculator for Tebex stores.** It shows what you actually earn after tax and fees, how much of it has settled, and exactly how much to pay each revenue-share partner, down to the item in the basket.
 
@@ -28,8 +28,8 @@ Built for game server owners who sell through [Tebex](https://www.tebex.io/), pa
 You need [Node.js](https://nodejs.org/) 18 or newer. There is nothing to `npm install`.
 
 ```bash
-git clone https://github.com/OWNER/revenue-split.git
-cd revenue-split
+git clone https://github.com/Miscodings/tebex-revenue-splitter.git
+cd tebex-revenue-splitter
 npm run demo      # try it with generated fake data, on http://localhost:3378
 npm start         # run it for real, on http://localhost:3377
 ```

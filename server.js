@@ -175,11 +175,16 @@ function report(db, month) {
 
 function monthly(db) {
   const months = [...new Set(db.payments.map((p) => String(p.date).slice(0, 7)))].sort();
+  // Everything before "count from" is treated as settled up: neither those sales nor those payouts count toward balances.
+  const from = db.settings.calcFrom || '';
   const paid = {};
-  for (const po of db.payouts) paid[po.partner] = (paid[po.partner] || 0) + toCents(po.amount);
+  for (const po of db.payouts) if (!from || po.date >= from) paid[po.partner] = (paid[po.partner] || 0) + toCents(po.amount);
   const history = months.map((m) => report(db, m));
   const owedAll = {};
-  for (const h of history) for (const p of h.partners) owedAll[p.id] = (owedAll[p.id] || 0) + p.owed;
+  for (const r of compute(db)) {
+    if (!r.active || (from && r.date.slice(0, 10) < from)) continue;
+    for (const s of r.splits) owedAll[s.partner] = (owedAll[s.partner] || 0) + s.cents;
+  }
   const balances = db.partners.map((p) => ({
     id: p.id, name: p.name, owed: owedAll[p.id] || 0, paid: paid[p.id] || 0,
     balance: (owedAll[p.id] || 0) - (paid[p.id] || 0),
