@@ -39,3 +39,19 @@ b.payments.push({ id: 'bk', source: 'Main Store', date: '2026-10-04T10:00:00Z', 
 const rb = require('./server').compute(b).find((x) => x.id === 'bk');
 assert.equal(rb.splits.find((s) => s.label === 'Premium skins').cents, 1800); // 60% of the 30.00 skin share, not of 40.00
 console.log('wallet + basket ok');
+
+// test purchases: excluded from totals/splits by buyer name or by flag; "count from" accepts an exact timestamp
+const t = defaultDb();
+t.settings.testAccounts = 'TesterBob, someone';
+const mk = (id, user, d, gross, extra = {}) => t.payments.push({ id, source: 'Main Store', date: d, product: 'Fire Skin', items: ['Fire Skin'], user, gross, tax: 0, fee: 0, status: 'Complete', currency: 'USD', ...extra });
+mk('r1', 'RealBuyer', '2026-10-05T10:00:00Z', 10);
+mk('t1', 'testerbob', '2026-10-05T11:00:00Z', 100);            // test by name (case-insensitive)
+mk('t2', 'Other', '2026-10-05T12:00:00Z', 100, { test: true }); // test by flag
+const rt = require('./server').report(t, '2026-10');
+assert.equal(rt.totals.count, 1); assert.equal(rt.totals.gross, 1000);
+assert.equal(require('./server').compute(t).filter((x) => x.test).length, 2);
+const cp = require('./server').calcPayout(t, { from: '2026-10-05T10:30:00.000Z', now: new Date('2026-12-01T00:00:00Z').getTime() });
+assert.equal(cp.partners[0].settled, 0); // r1 is before the exact cut-off, so it is treated as already settled up
+const cp2 = require('./server').calcPayout(t, { from: '2026-10-05', now: new Date('2026-12-01T00:00:00Z').getTime() });
+assert.ok(cp2.partners[0].settled > 0);
+console.log('test accounts + timestamp cut-off ok');

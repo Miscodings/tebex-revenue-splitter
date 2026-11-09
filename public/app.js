@@ -98,10 +98,11 @@ async function pay(){
    <select id="msrc">${srcOpts}</select><input id="mprod" placeholder="Product name"><input id="mdate" type="date" value="${new Date().toISOString().slice(0,10)}">
    <input id="mgross" type="number" step="0.01" placeholder="Gross" style="width:90px"><input id="mtax" type="number" step="0.01" placeholder="Tax (opt)" style="width:90px"><input id="mfee" type="number" step="0.01" placeholder="Fee (opt)" style="width:90px">
    <button class="p" onclick="addPay()">Add</button></div></div>
-  <div class="card"><h2>Payments (${rows.length})</h2><div style="overflow:auto"><table><tr><th>Date</th><th>Source</th><th>Product</th><th>Status</th><th class="n">Gross</th><th class="n">Tax</th><th class="n">Fee</th><th class="n">Net</th><th class="n">Partners</th><th></th></tr>
-  ${rows.slice(0,500).map(r=>`<tr class="${r.active?'':'mute'}"><td>${r.date.slice(0,10)}</td><td>${esc(r.source)}</td><td>${esc(r.product)}</td><td>${esc(r.status)}</td>
+  <div class="card"><h2>Payments (${rows.length})</h2><div style="overflow:auto"><table><tr><th>Date</th><th>Source</th><th>Product</th><th>Status</th><th class="n">Gross</th><th class="n">Tax</th><th class="n">Fee</th><th class="n">Net</th><th class="n">Partners</th><th>Test</th><th></th></tr>
+  ${rows.slice(0,500).map(r=>`<tr class="${r.active?'':'mute'}"><td>${r.date.slice(0,10)}</td><td>${esc(r.source)}</td><td>${esc(r.product)}</td><td>${esc(r.status)}${r.test?' <b class="bad">TEST</b>':''}</td>
    <td class="n">${m$(r.gross)}</td><td class="n">${m$(r.tax)}${r.taxEst?'*':''}</td><td class="n">${m$(r.fee)}${r.feeEst?'*':''}</td><td class="n">${m$(r.net)}</td>
    <td class="n" title="${esc(r.splits.map(s=>s.label+': '+m$(s.cents)).join('\n'))}">${m$(r.owed)}</td>
+   <td><input type="checkbox" aria-label="Mark as test purchase" ${r.test?'checked':''} data-id="${esc(r.id)}" data-src="${esc(r.source)}" onchange="markTest(this)"></td>
    <td><button class="d" data-id="${esc(r.id)}" data-src="${esc(r.source)}" onclick="delPay(this)">x</button></td></tr>`).join('')}</table></div>
   <small>* = estimated. Showing newest 500. Hover Partners cell for the split.</small>
   <div class="row"><button class="d" onclick="clearAll()">Delete ALL payments</button></div></div>`}
@@ -109,6 +110,7 @@ window.doImport=guard(async()=>{const f=$('#ifile').files[0];if(!f)throw new Err
   const r=await api('import',{source:$('#isrc').value,csv:await f.text()});
   toast(`Added ${r.added}, duplicates ${r.dupes}, skipped ${r.skipped.length}${r.skipped.length?' ('+r.skipped.slice(0,3).join('; ')+')':''}`);refresh()});
 window.addPay=guard(async()=>{await api('payment',{source:$('#msrc').value,product:$('#mprod').value,date:$('#mdate').value,gross:$('#mgross').value,tax:$('#mtax').value,fee:$('#mfee').value});refresh()});
+window.markTest=guard(async b=>{await api('payment/test',{id:b.dataset.id,source:b.dataset.src,test:b.checked});toast(b.checked?'Marked as test: no longer counted':'Counted again');refresh()});
 window.delPay=guard(async b=>{await api('payment/delete',{id:b.dataset.id,source:b.dataset.src});refresh()});
 window.clearAll=guard(async()=>{if(prompt('Type DELETE to wipe all payments')==='DELETE'){await api('payments/clear',{confirm:'DELETE'});refresh()}});
 
@@ -144,7 +146,7 @@ async function calc(){
     <small>Type the exact figure from the wallet page. Blank = estimate.</small></div>
    <div class="row">${esc(c.ownerSources.join(', ')||'Owner-only')} money inside it <input type="number" step="0.01" style="width:210px" placeholder="${(c.ownerCycle/100).toFixed(2)} (estimate)" value="${esc(cin.o)}" onchange="cin.o=this.value">
     <small>Settled ${esc(c.ownerSources.join(', '))} sales since your last withdrawal${c.lastWithdrawal?' ('+esc(c.lastWithdrawal.slice(0,10))+')':''}. Blank = estimate.</small></div>
-   <div class="row">Count partner sales from <input type="date" value="${esc(c.from)}" onchange="setFrom(this.value)"><small>Start of the deal. Earlier sales and payouts are ignored.</small></div>
+   <div class="row">Count partner sales from <input type="date" value="${esc(c.from.slice(0,10))}" onchange="setFrom(this.value)"><small>${c.from.length>10?'Set to an exact moment (settled up as of '+esc(new Date(c.from).toLocaleString())+'). Picking a date here replaces it. ':''}Start of the deal. Earlier sales and payouts are ignored.</small></div>
    <div class="row"><button class="p" onclick="window.__showerNext=true;render()">Calculate</button></div></div>
   <div class="card"><h2>${step(3,'Result')} <small>sales settled before ${esc(new Date(c.cutoff).toLocaleDateString())} (${c.settleDays}-day window)</small></h2>
    <div class="pool"><div><small>Withdrawable now</small><div class="big">${mB(c.withdrawable)}</div></div>
@@ -210,8 +212,10 @@ async function payouts(){
 window.addPayout=guard(async()=>{await api('payout',{partner:$('#ppart').value,amount:$('#pamt').value,date:$('#pdate').value,note:$('#pnote').value});refresh()});
 window.delPayout=guard(async id=>{await api('payout/delete',{id});refresh()});
 
-let sdraft=null;
-async function settings(){sdraft=sdraft||{sources:JSON.parse(JSON.stringify(S.sources)),settings:{...S.settings}};
+let sdraft=null,sbase=null;
+// Only send fields that were edited in this form, so a stale form can never overwrite settings changed elsewhere (e.g. the count-from date).
+function draftDiff(){const out={};const st={};for(const k of Object.keys(sdraft.settings))if(JSON.stringify(sdraft.settings[k])!==JSON.stringify(sbase.settings[k]))st[k]=sdraft.settings[k];if(Object.keys(st).length)out.settings=st;if(JSON.stringify(sdraft.sources)!==JSON.stringify(sbase.sources))out.sources=sdraft.sources;return out}
+async function settings(){if(!sdraft){sdraft={sources:JSON.parse(JSON.stringify(S.sources)),settings:{...S.settings}};sbase=JSON.parse(JSON.stringify(sdraft))}
   return `<div class="card"><h2>Sources (where money comes from)</h2>
   <small>Fee/tax % are used ONLY for payments whose CSV had no fee/tax values. Fee % applies after tax is removed. Compare one month against your real Tebex/MCModels payout and tune until it matches.</small>
   <div style="overflow-x:auto"><table><tr><th>Name</th><th>Fee %</th><th>Fixed fee / sale</th><th>Tax % (included in price)</th><th title="All of this source's money is yours: no partner splits, comes off first in the calculator">All mine</th><th></th></tr>
@@ -238,12 +242,13 @@ async function settings(){sdraft=sdraft||{sources:JSON.parse(JSON.stringify(S.so
   <small>Posts an embed for every new sale found by the Tebex sync: items, amount, and what each partner is owed afterwards. Needs auto-sync switched on above and the app running. Only sales from the moment you turn this on are announced. In Discord: channel settings > Integrations > Webhooks > New Webhook > Copy Webhook URL.</small>
   <div class="row">Webhook URL <input type="password" style="flex:1;min-width:300px" autocomplete="off" placeholder="${S.settings.purchaseWebhookSet?'(saved - type to replace)':'https://discord.com/api/webhooks/...'}" onchange="sdraft.settings.purchaseWebhook=this.value"></div>
   <div class="row"><label><input type="checkbox" ${sdraft.settings.notifyPurchases?'checked':''} onchange="sdraft.settings.notifyPurchases=this.checked"> Announce new purchases</label>
+   Test accounts <input style="width:200px" placeholder="your in-game names" title="Purchases by these buyers are never counted and are announced as [TEST]" value="${esc(sdraft.settings.testAccounts||'')}" onchange="sdraft.settings.testAccounts=this.value">
    Highlight items containing <input style="width:120px" value="${esc(sdraft.settings.highlightKeyword||'')}" onchange="sdraft.settings.highlightKeyword=this.value"></div>
   <div class="row"><button class="p" onclick="saveSettings()">Save</button><button onclick="testAlert()">Send test alert</button></div></div>`}
 window.toggleOwner=(i,on)=>{const n=sdraft.sources[i].name,set=new Set(sdraft.settings.ownerSources||[]);on?set.add(n):set.delete(n);sdraft.settings.ownerSources=[...set]};
-window.testAlert=guard(async()=>{if(sdraft&&(sdraft.settings.purchaseWebhook))await api('config',sdraft);await api('notify-test',{});toast('Test alert sent to Discord')});
-window.syncNow=guard(async()=>{if(sdraft&&sdraft.settings.tebexSecret)await api('config',sdraft);toast('Syncing...');const r=await api('sync-tebex');sdraft=null;toast(`Tebex: ${r.added} new, ${r.updated} status changes, ${r.skipped} skipped (of ${r.total})`);refresh()});
+window.testAlert=guard(async()=>{if(sdraft){const d=draftDiff();if(Object.keys(d).length)await api('config',d)}await api('notify-test',{});toast('Test alert sent to Discord')});
+window.syncNow=guard(async()=>{if(sdraft){const d=draftDiff();if(Object.keys(d).length)await api('config',d)}toast('Syncing...');const r=await api('sync-tebex');sdraft=null;toast(`Tebex: ${r.added} new, ${r.updated} status changes, ${r.skipped} skipped (of ${r.total})`);refresh()});
 window.clearSecret=guard(async()=>{await api('tebex-secret/clear',{});sdraft=null;refresh()});
-window.saveSettings=guard(async()=>{await api('config',sdraft);sdraft=null;toast('Saved');refresh()});
+window.saveSettings=guard(async()=>{const d=draftDiff();if(Object.keys(d).length)await api('config',d);sdraft=null;sbase=null;toast('Saved');refresh()});
 if(tab==='calc')window.__showerNext=true;
 refresh().catch(e=>toast(e.message,1));

@@ -29,6 +29,7 @@ function defaultDb() {
       walletGroups: {}, // map each store shown in your wallet export to a source below
       tebexSource: 'Main Store', // source that the Tebex API sync imports into
       notifyPurchases: false, purchaseWebhook: '', // Discord alert for every new sale
+      testAccounts: '', // buyer names (comma separated) whose purchases are tests: never counted, announced as [TEST]
       highlightKeyword: 'skin', // sales whose items contain this word get a highlighted alert
       settleDays: 13, // approx days before a purchase leaves "settling"
       ownerSources: [], // sources whose money is 100% yours (no partner splits)
@@ -74,6 +75,9 @@ function save(db) {
 // ---------- money math (integer cents) ----------
 const toCents = (n) => Math.round(Number(n) * 100);
 const fromCents = (c) => c / 100;
+// "count from" is a date (YYYY-MM-DD) or a full ISO timestamp for exact cut-offs such as "settled up as of right now".
+const sinceFrom = (iso, from) => !from || (from.length > 10 ? iso >= from : iso.slice(0, 10) >= from);
+const payoutSince = (po, from) => !from || po.date >= from.slice(0, 10);
 
 function netOf(p, source) {
   const gross = toCents(p.gross);
@@ -112,13 +116,20 @@ function lineShares(p, prices) {
   const known = items.every((n) => prices[n] > 0);
   return items.map((n) => ({ name: n, w: known ? prices[n] : 1 }));
 }
+// A purchase is a test if it was flagged by hand or its buyer is on the Test accounts list.
+function isTestPayment(db, p) {
+  if (p.test) return true;
+  const names = String(db.settings.testAccounts || '').split(',').map((x) => x.trim().toLowerCase()).filter(Boolean);
+  return !!p.user && names.includes(String(p.user).toLowerCase());
+}
 function compute(db) {
   const srcMap = Object.fromEntries(db.sources.map((s) => [s.name, s]));
   const prices = itemPrices(db);
   return db.payments.map((p) => {
     const m = netOf(p, srcMap[p.source]);
     // refunds/declines and sales in other currencies (kept by the owner, not in the USD wallet) are not counted
-    const active = !BAD_STATUS.test(p.status || '') && (!p.currency || p.currency === db.settings.currency);
+    const test = isTestPayment(db, p);
+    const active = !BAD_STATUS.test(p.status || '') && (!p.currency || p.currency === db.settings.currency) && !test;
     const splits = [];
     if (active) {
       const lines = lineShares(p, prices); const wSum = lines.reduce((a, l) => a + l.w, 0);
@@ -133,7 +144,7 @@ function compute(db) {
       }
     }
     const owed = splits.reduce((a, s) => a + s.cents, 0);
-    return { ...p, ...m, active, splits, owed, mine: m.net - owed, month: String(p.date).slice(0, 7) };
+    return { ...p, ...m, active, test, splits, owed, mine: m.net - owed, month: String(p.date).slice(0, 7) };
   });
 }
 
@@ -178,11 +189,11 @@ function monthly(db) {
   // Everything before "count from" is treated as settled up: neither those sales nor those payouts count toward balances.
   const from = db.settings.calcFrom || '';
   const paid = {};
-  for (const po of db.payouts) if (!from || po.date >= from) paid[po.partner] = (paid[po.partner] || 0) + toCents(po.amount);
+  for (const po of db.payouts) if (payoutSince(po, from)) paid[po.partner] = (paid[po.partner] || 0) + toCents(po.amount);
   const history = months.map((m) => report(db, m));
   const owedAll = {};
   for (const r of compute(db)) {
-    if (!r.active || (from && r.date.slice(0, 10) < from)) continue;
+    if (!r.active || !sinceFrom(r.date, from)) continue;
     for (const s of r.splits) owedAll[s.partner] = (owedAll[s.partner] || 0) + s.cents;
   }
   const balances = db.partners.map((p) => ({
@@ -388,7 +399,7 @@ function calcPayout(db, opt = {}) {
   const pool = withdrawable - ownerPart;
 
   const walletLoaded = (db.wallet || []).length > 0;
-  const rows = compute(db).filter((r) => r.active && !owner.has(r.source) && (!from || r.date.slice(0, 10) >= from));
+  const rows = compute(db).filter((r) => r.active && !owner.has(r.source) && sinceFrom(r.date, from));
   let unverified = 0;
   const per = {};
   for (const pt of db.partners) per[pt.id] = { id: pt.id, name: pt.name, settled: 0, deferred: 0, paid: 0, byRule: {} };
@@ -400,7 +411,7 @@ function calcPayout(db, opt = {}) {
       if (settled) { p.settled += sp.cents; p.byRule[sp.label] = (p.byRule[sp.label] || 0) + sp.cents; } else p.deferred += sp.cents;
     }
   }
-  for (const po of db.payouts) if (per[po.partner] && (!from || po.date >= from)) per[po.partner].paid += toCents(po.amount);
+  for (const po of db.payouts) if (per[po.partner] && payoutSince(po, from)) per[po.partner].paid += toCents(po.amount);
   const partners = Object.values(per).map((p) => ({ ...p, unpaid: Math.max(0, p.settled - p.paid), overpaid: Math.max(0, p.paid - p.settled) }));
   const need = partners.reduce((a, p) => a + p.unpaid, 0);
   const pay = Math.min(need, pool);
@@ -504,7 +515,7 @@ function purchaseEmbed(db, p, cum, test) {
   ];
   if (p.user) fields.push({ name: 'Buyer', value: p.user, inline: true });
   if (hit.length) fields.push({ name: `${kwd[0].toUpperCase()}${kwd.slice(1)} purchase`, value: hit.join('\n').slice(0, 1000) });
-  for (const pt of db.partners) {
+  for (const pt of (p.isTest ? [] : db.partners)) {
     const earned = p.splits.filter((s) => s.partner === pt.id);
     const c = cum[pt.id];
     if (!earned.length && !(c && c.unpaid > 0)) continue;
@@ -516,16 +527,16 @@ function purchaseEmbed(db, p, cum, test) {
     });
   }
   return {
-    title: `${test ? '[TEST] ' : ''}${hit.length ? `${kwd[0].toUpperCase()}${kwd.slice(1)} purchase` : 'New purchase'}`,
+    title: `${test || p.isTest ? '[TEST] ' : ''}${hit.length ? `${kwd[0].toUpperCase()}${kwd.slice(1)} purchase` : 'New purchase'}`,
     color: hit.length ? 0xf0b429 : 0x5b8def, fields, timestamp: p.date, footer: { text: `${p.source} | ${String(p.ref || p.id).slice(0, 40)}` },
   };
 }
 // Running "owed to each partner" after every sale, in time order.
 function runningOwed(db) {
   const from = db.settings.calcFrom || '';
-  const rows = compute(db).filter((r) => r.active && (!from || r.date.slice(0, 10) >= from)).sort((a, b) => a.date.localeCompare(b.date));
+  const rows = compute(db).filter((r) => r.active && sinceFrom(r.date, from)).sort((a, b) => a.date.localeCompare(b.date));
   const paid = {};
-  for (const po of db.payouts) if (!from || po.date >= from) paid[po.partner] = (paid[po.partner] || 0) + toCents(po.amount);
+  for (const po of db.payouts) if (payoutSince(po, from)) paid[po.partner] = (paid[po.partner] || 0) + toCents(po.amount);
   const owed = {}; const out = new Map();
   for (const r of rows) {
     for (const s of r.splits) owed[s.partner] = (owed[s.partner] || 0) + s.cents;
@@ -551,11 +562,11 @@ async function notifyPurchases(db) {
   const byId = new Map(compute(db).map((r) => [r.source + '|' + r.id, r]));
   const cum = runningOwed(db);
   const queue = db.payments.filter((p) => !p.notified && p.source === src && p.date > after && !p.walletOnly)
-    .sort((a, b) => a.date.localeCompare(b.date)).map((p) => ({ p, r: byId.get(p.source + '|' + p.id) })).filter((x) => x.r && x.r.active);
+    .sort((a, b) => a.date.localeCompare(b.date)).map((p) => ({ p, r: byId.get(p.source + '|' + p.id) })).filter((x) => x.r && (x.r.active || x.r.test));
   let sent = 0;
   for (let i = 0; i < queue.length; i += 10) {
     const chunk = queue.slice(i, i + 10);
-    await postEmbeds(url, chunk.map(({ p, r }) => purchaseEmbed(db, { ...p, grossC: r.gross, netC: r.net, splits: r.splits }, cum.get(p.source + '|' + p.id) || {})));
+    await postEmbeds(url, chunk.map(({ p, r }) => purchaseEmbed(db, { ...p, grossC: r.gross, netC: r.net, splits: r.splits, isTest: r.test }, cum.get(p.source + '|' + p.id) || {}, r.test)));
     chunk.forEach(({ p }) => { p.notified = true; }); sent += chunk.length;
   }
   return { sent };
@@ -637,6 +648,11 @@ const server = http.createServer(async (req, res) => {
         save(db); return send(res, 200, { ok: true });
       }
       case 'POST /api/payment/delete': db.payments = db.payments.filter((p) => !(p.id === body.id && p.source === body.source)); save(db); return send(res, 200, { ok: true });
+      case 'POST /api/payment/test': {
+        const p = db.payments.find((x) => x.id === body.id && x.source === body.source);
+        if (!p) throw new Error('payment not found');
+        p.test = !!body.test; save(db); return send(res, 200, { ok: true });
+      }
       case 'POST /api/payments/clear': if (body.confirm !== 'DELETE') throw new Error('confirm'); db.payments = []; save(db); return send(res, 200, { ok: true });
       case 'POST /api/config': {
         if (body.settings) {
