@@ -1,0 +1,22 @@
+# Private data must never be committed. The app keeps its data OUTSIDE this folder
+# (%APPDATA%\RevenueSplit on Windows, ~/.revenue-split elsewhere); these are belt and braces.
+data/
+db.json
+db.json.bak
+*.bak
+*.csv
+!test/**/*.csv
+wallet-export*
+*Wallet Export*
+.env
+.env.*
+*.key
+last-monthly-open.txt
+private-leftovers/
+
+# tooling
+.playwright-mcp/
+node_modules/
+.DS_Store
+Thumbs.db
+*.log

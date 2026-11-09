@@ -1,0 +1,14 @@
+{
+  "name": "revenue-split",
+  "version": "1.0.0",
+  "description": "Local payout calculator for Tebex stores: real fees and tax, wallet settling, partner revenue splits, Discord alerts.",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "demo": "node demo.js",
+    "test": "node test.js && node test-sync.js && node test-notify.js"
+  },
+  "engines": { "node": ">=18" },
+  "keywords": ["tebex", "minecraft", "revenue-share", "payouts", "discord-webhook"],
+  "license": "MIT"
+}

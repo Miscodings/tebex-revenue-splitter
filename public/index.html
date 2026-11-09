@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Revenue Split</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpath d='M20 3a13 13 0 1 0 9 22A11 11 0 0 1 20 3z' fill='%23d9a441'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="app.css">
+</head><body>
+<canvas id="bg" aria-hidden="true"></canvas>
+<div class="shell">
+  <aside class="side">
+    <div class="brand">
+      <svg viewBox="0 0 32 32" aria-hidden="true"><defs><linearGradient id="mg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#f0c46a"/><stop offset="1" stop-color="#b9822a"/></linearGradient></defs><path d="M20 3a13 13 0 1 0 9 22A11 11 0 0 1 20 3z" fill="url(#mg)"/></svg>
+      <span>Revenue Split</span>
+    </div>
+    <nav id="nav" aria-label="Main"></nav>
+    <div class="side-foot">
+      <label for="month">Period</label><select id="month"></select>
+      <div id="syncchip" class="off"><i></i><span>Not synced yet</span></div>
+    </div>
+  </aside>
+  <main id="main" tabindex="-1"></main>
+</div>
+<canvas id="fx" aria-hidden="true"></canvas>
+<div id="toast" role="status" aria-live="polite"></div>
+<script type="module" src="scene.js"></script>
+<script src="app.js"></script>
+</body></html>
